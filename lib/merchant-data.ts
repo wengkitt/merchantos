@@ -1,12 +1,88 @@
 export type OrderStatus = "Ready" | "Packing" | "On hold" | "Shipped";
-export type Order = { id: string; customer: string; channel: string; productId: string; productName: string; quantity: number; items: string; total: number; status: OrderStatus; createdAt: string };
-export type Product = { id: string; name: string; sku: string; stock: number; committed: number; dailySales: number; batchYield: number; tone: string };
-export type Ingredient = { id: string; name: string; unit: string; stock: number; reorderLevel: number; supplierId: string; supplierName: string; projected?: number; required?: number };
+export type Order = {
+  id: string;
+  customer: string;
+  channel: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  items: string;
+  total: number;
+  status: OrderStatus;
+  createdAt: string;
+};
+export type Product = {
+  id: string;
+  name: string;
+  sku: string;
+  stock: number;
+  committed: number;
+  dailySales: number;
+  batchYield: number;
+  tone: string;
+};
+export type Ingredient = {
+  id: string;
+  name: string;
+  unit: string;
+  stock: number;
+  reorderLevel: number;
+  supplierId: string;
+  supplierName: string;
+  projected?: number;
+  required?: number;
+};
 export type PlanItem = { productId: string; productName: string; batches: number };
-export type ProductionPlan = { id: string; status: "Draft" | "Approved"; rationale: string; createdBy: string; createdAt: string; approvedAt?: string; items: PlanItem[] };
-export type PurchaseDraft = { id: string; supplierId: string; supplierName: string; ingredientId: string; ingredientName: string; quantity: number; unit: string; estimatedCost: number; status: "Draft" | "Approved"; createdBy: string; createdAt: string };
-export type AuditEntry = { id: number; actor: string; action: string; detail: string; createdAt: string };
-export type Metrics = { queueValue: number; orders: number; awaitingFulfillment: number; readyToShip: number; needsAttention: number };
-export type OperationsData = { merchant: { name: string; location: string }; metrics: Metrics; orders: Order[]; products: Product[]; ingredients: Ingredient[]; productionPlans: ProductionPlan[]; purchaseDrafts: PurchaseDraft[]; audit: AuditEntry[] };
-export const money = (value: number) => new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR", maximumFractionDigits: 0 }).format(value);
+export type ProductionPlan = {
+  id: string;
+  status: "Draft" | "Approved";
+  rationale: string;
+  createdBy: string;
+  createdAt: string;
+  approvedAt?: string;
+  items: PlanItem[];
+};
+export type PurchaseDraft = {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  ingredientId: string;
+  ingredientName: string;
+  quantity: number;
+  unit: string;
+  estimatedCost: number;
+  status: "Draft" | "Approved";
+  createdBy: string;
+  createdAt: string;
+};
+export type AuditEntry = {
+  id: number;
+  actor: string;
+  action: string;
+  detail: string;
+  createdAt: string;
+};
+export type Metrics = {
+  queueValue: number;
+  orders: number;
+  awaitingFulfillment: number;
+  readyToShip: number;
+  needsAttention: number;
+};
+export type OperationsData = {
+  merchant: { name: string; location: string };
+  metrics: Metrics;
+  orders: Order[];
+  products: Product[];
+  ingredients: Ingredient[];
+  productionPlans: ProductionPlan[];
+  purchaseDrafts: PurchaseDraft[];
+  audit: AuditEntry[];
+};
+export const money = (value: number) =>
+  new Intl.NumberFormat("en-MY", {
+    style: "currency",
+    currency: "MYR",
+    maximumFractionDigits: 0,
+  }).format(value);
 export const salesBars = [42, 54, 49, 68, 63, 77, 71, 88, 75, 92, 83, 100, 86, 94];

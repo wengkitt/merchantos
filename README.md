@@ -56,6 +56,13 @@ pnpm run dev
 
 Open `http://localhost:3000`.
 
+Format the project with Oxfmt, or check formatting without changing files:
+
+```bash
+pnpm run format
+pnpm run format:check
+```
+
 ## Test WebMCP
 
 Use ChatGPT's in-app browser, which supports WebMCP, or Chrome 149+ with `chrome://flags/#enable-webmcp-testing` enabled.

@@ -13,11 +13,7 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "types": [
-        "./worker-configuration.d.ts",
-        "node",
-        "vinext/types"
-    ],
+    "types": ["./worker-configuration.d.ts", "node", "vinext/types"],
     "paths": {
       "@/*": ["./*"]
     }

@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { money, salesBars, type OperationsData, type Order, type OrderStatus, type Product } from "@/lib/merchant-data";
+import {
+  money,
+  salesBars,
+  type OperationsData,
+  type Order,
+  type OrderStatus,
+  type Product,
+} from "@/lib/merchant-data";
 
 type View = "Overview" | "Orders" | "Inventory" | "Ingredients" | "Action review" | "Activity";
 type ApiResponse = { result: unknown; data: OperationsData };
@@ -17,8 +24,22 @@ const paths: Record<string, string> = {
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
 };
 
-function Icon({ name, size = 18 }: { name: string; size?: number }) { return <svg aria-hidden="true" fill="none" height={size} viewBox="0 0 24 24" width={size}><path d={paths[name] ?? "M12 4v16M4 12h16"} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>; }
-const webResult = (value: unknown): WebMCPResult => ({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }] });
+function Icon({ name, size = 18 }: { name: string; size?: number }) {
+  return (
+    <svg aria-hidden="true" fill="none" height={size} viewBox="0 0 24 24" width={size}>
+      <path
+        d={paths[name] ?? "M12 4v16M4 12h16"}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+const webResult = (value: unknown): WebMCPResult => ({
+  content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+});
 
 export function MerchantDashboard() {
   const [data, setData] = useState<OperationsData | null>(null);
@@ -32,84 +53,1233 @@ export function MerchantDashboard() {
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/merchant", { cache: "no-store" });
-    const payload = await response.json() as OperationsData & { error?: string };
+    const payload = (await response.json()) as OperationsData & { error?: string };
     if (!response.ok) throw new Error(payload.error ?? "Could not load operations");
     dataRef.current = payload;
     setData(payload);
     return payload;
   }, []);
 
-  useEffect(() => { refresh().catch((err) => setError(err.message)); }, [refresh]);
+  useEffect(() => {
+    refresh().catch((err) => setError(err.message));
+  }, [refresh]);
 
   const act = useCallback(async (input: Record<string, unknown>, message?: string) => {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
-      const response = await fetch("/api/merchant", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
-      const payload = await response.json() as ApiResponse & { error?: string };
+      const response = await fetch("/api/merchant", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const payload = (await response.json()) as ApiResponse & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Action failed");
       dataRef.current = payload.data;
       setData(payload.data);
-      if (message) { setToast(message); window.setTimeout(() => setToast(null), 2600); }
+      if (message) {
+        setToast(message);
+        window.setTimeout(() => setToast(null), 2600);
+      }
       return payload.result;
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
-  const riskProducts = useMemo(() => data?.products.filter((p) => p.stock - p.committed < p.dailySales) ?? [], [data]);
+  const riskProducts = useMemo(
+    () => data?.products.filter((p) => p.stock - p.committed < p.dailySales) ?? [],
+    [data],
+  );
 
   useEffect(() => {
     if (!document.modelContext || !dataRef.current) return;
     const controller = new AbortController();
-    const register = (tool: WebMCPTool) => document.modelContext?.registerTool(tool, { signal: controller.signal });
-    register({ name: "get_business_snapshot", description: "Get the live Pinang Batchworks order queue value, fulfillment counts, stock risk count, draft actions, and recent activity.", execute: () => { const live = dataRef.current!; return webResult({ merchant: live.merchant, metrics: live.metrics, draftProductionPlans: live.productionPlans.filter((p) => p.status === "Draft").length, draftPurchases: live.purchaseDrafts.filter((p) => p.status === "Draft").length, recentActivity: live.audit.slice(0, 4) }); } });
-    register({ name: "analyze_fulfillment_risk", description: "Investigate products and orders at risk, calculate production needs, and explain the next coordinated operational step. Read-only.", execute: async () => webResult(await act({ action: "analyze_fulfillment_risk", actor: "Agent" })) });
-    register({ name: "get_orders", description: "List persisted orders, optionally filtered by workflow status.", inputSchema: { type: "object", properties: { status: { type: "string", enum: ["Ready", "Packing", "On hold", "Shipped"] } } }, execute: ({ status }) => { const orders = dataRef.current!.orders; return webResult(status ? orders.filter((o) => o.status === status) : orders); } });
-    register({ name: "get_inventory", description: "Get finished-goods stock, committed demand, daily sales velocity and batch yield.", execute: () => webResult(dataRef.current!.products) });
-    register({ name: "get_ingredient_coverage", description: "Get ingredient stock, reorder thresholds and suppliers so the agent can assess whether recommended production is feasible.", execute: () => webResult(dataRef.current!.ingredients) });
-    register({ name: "prepare_operations_draft", description: "Create a coordinated, visible draft production plan and any required ingredient purchase drafts. Nothing is approved or sent; the human must review each action.", execute: async () => { const result = await act({ action: "create_operations_draft", actor: "Agent" }, "Agent prepared actions for review"); setView("Action review"); return webResult(result); } });
-    register({ name: "update_order_status", description: "Update one persisted order status and record the agent action in the audit trail.", inputSchema: { type: "object", properties: { orderId: { type: "string" }, status: { type: "string", enum: ["Ready", "Packing", "On hold", "Shipped"] } }, required: ["orderId", "status"] }, execute: async ({ orderId, status }) => webResult(await act({ action: "update_order_status", orderId, status, actor: "Agent" }, `${orderId} updated by agent`)) });
-    register({ name: "show_workspace_view", description: "Navigate the visible MerchantOS workspace so the human can inspect the requested business area.", inputSchema: { type: "object", properties: { view: { type: "string", enum: ["Overview", "Orders", "Inventory", "Ingredients", "Action review", "Activity"] } }, required: ["view"] }, execute: ({ view: nextView }) => { setView(nextView as View); return webResult({ visibleView: nextView }); } });
+    const register = (tool: WebMCPTool) =>
+      document.modelContext?.registerTool(tool, { signal: controller.signal });
+    register({
+      name: "get_business_snapshot",
+      description:
+        "Get the live Pinang Batchworks order queue value, fulfillment counts, stock risk count, draft actions, and recent activity.",
+      execute: () => {
+        const live = dataRef.current!;
+        return webResult({
+          merchant: live.merchant,
+          metrics: live.metrics,
+          draftProductionPlans: live.productionPlans.filter((p) => p.status === "Draft").length,
+          draftPurchases: live.purchaseDrafts.filter((p) => p.status === "Draft").length,
+          recentActivity: live.audit.slice(0, 4),
+        });
+      },
+    });
+    register({
+      name: "analyze_fulfillment_risk",
+      description:
+        "Investigate products and orders at risk, calculate production needs, and explain the next coordinated operational step. Read-only.",
+      execute: async () =>
+        webResult(await act({ action: "analyze_fulfillment_risk", actor: "Agent" })),
+    });
+    register({
+      name: "get_orders",
+      description: "List persisted orders, optionally filtered by workflow status.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Ready", "Packing", "On hold", "Shipped"] },
+        },
+      },
+      execute: ({ status }) => {
+        const orders = dataRef.current!.orders;
+        return webResult(status ? orders.filter((o) => o.status === status) : orders);
+      },
+    });
+    register({
+      name: "get_inventory",
+      description:
+        "Get finished-goods stock, committed demand, daily sales velocity and batch yield.",
+      execute: () => webResult(dataRef.current!.products),
+    });
+    register({
+      name: "get_ingredient_coverage",
+      description:
+        "Get ingredient stock, reorder thresholds and suppliers so the agent can assess whether recommended production is feasible.",
+      execute: () => webResult(dataRef.current!.ingredients),
+    });
+    register({
+      name: "prepare_operations_draft",
+      description:
+        "Create a coordinated, visible draft production plan and any required ingredient purchase drafts. Nothing is approved or sent; the human must review each action.",
+      execute: async () => {
+        const result = await act(
+          { action: "create_operations_draft", actor: "Agent" },
+          "Agent prepared actions for review",
+        );
+        setView("Action review");
+        return webResult(result);
+      },
+    });
+    register({
+      name: "update_order_status",
+      description:
+        "Update one persisted order status and record the agent action in the audit trail.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          orderId: { type: "string" },
+          status: { type: "string", enum: ["Ready", "Packing", "On hold", "Shipped"] },
+        },
+        required: ["orderId", "status"],
+      },
+      execute: async ({ orderId, status }) =>
+        webResult(
+          await act(
+            { action: "update_order_status", orderId, status, actor: "Agent" },
+            `${orderId} updated by agent`,
+          ),
+        ),
+    });
+    register({
+      name: "show_workspace_view",
+      description:
+        "Navigate the visible MerchantOS workspace so the human can inspect the requested business area.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          view: {
+            type: "string",
+            enum: ["Overview", "Orders", "Inventory", "Ingredients", "Action review", "Activity"],
+          },
+        },
+        required: ["view"],
+      },
+      execute: ({ view: nextView }) => {
+        setView(nextView as View);
+        return webResult({ visibleView: nextView });
+      },
+    });
     return () => controller.abort();
   }, [act, Boolean(data)]);
 
-  if (error && !data) return <main className="grid min-h-screen place-items-center bg-[var(--paper)] p-8"><div className="max-w-md border border-[var(--line)] bg-[var(--panel)] p-8 text-center"><h1 className="display-type text-3xl">MerchantOS could not start.</h1><p className="mt-3 text-sm text-[var(--muted)]">{error}</p><button onClick={() => location.reload()} className="mt-5 bg-[var(--wine)] px-5 py-3 text-xs font-bold uppercase tracking-widest text-white">Try again</button></div></main>;
-  if (!data) return <main className="grid min-h-screen place-items-center bg-[var(--paper)]"><div className="fine-label animate-pulse text-[var(--wine)]">Opening the workshop…</div></main>;
+  if (error && !data)
+    return (
+      <main className="grid min-h-screen place-items-center bg-[var(--paper)] p-8">
+        <div className="max-w-md border border-[var(--line)] bg-[var(--panel)] p-8 text-center">
+          <h1 className="display-type text-3xl">MerchantOS could not start.</h1>
+          <p className="mt-3 text-sm text-[var(--muted)]">{error}</p>
+          <button
+            onClick={() => location.reload()}
+            className="mt-5 bg-[var(--wine)] px-5 py-3 text-xs font-bold uppercase tracking-widest text-white"
+          >
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  if (!data)
+    return (
+      <main className="grid min-h-screen place-items-center bg-[var(--paper)]">
+        <div className="fine-label animate-pulse text-[var(--wine)]">Opening the workshop…</div>
+      </main>
+    );
 
-  const views: View[] = ["Overview", "Orders", "Inventory", "Ingredients", "Action review", "Activity"];
-  const approvalCount = data.productionPlans.filter(p=>p.status==="Draft").length + data.purchaseDrafts.filter(p=>p.status==="Draft").length;
-  const nav = views.map((item) => <button key={item} title={item === "Action review" ? "Approvals" : item} onClick={() => { setView(item); setMobileNav(false); }} className={`flex min-h-12 w-full items-center gap-3 border-l-2 px-5 text-left text-[13px] transition md:justify-center md:px-0 lg:justify-start lg:px-5 ${view === item ? "border-[var(--wine)] bg-[#f1ebe4] text-[var(--wine)]" : "border-transparent text-[#776d67] hover:bg-[#f5f1eb]"}`}><Icon name={item}/><span className="md:hidden lg:inline">{item === "Action review" ? "Approvals" : item}</span>{item === "Action review" && approvalCount > 0 && <span className="ml-auto rounded-full bg-[var(--wine)] px-2 py-0.5 text-[9px] text-white md:absolute md:ml-7 md:mt-[-25px] lg:static lg:ml-auto lg:mt-0">{approvalCount}</span>}</button>);
+  const views: View[] = [
+    "Overview",
+    "Orders",
+    "Inventory",
+    "Ingredients",
+    "Action review",
+    "Activity",
+  ];
+  const approvalCount =
+    data.productionPlans.filter((p) => p.status === "Draft").length +
+    data.purchaseDrafts.filter((p) => p.status === "Draft").length;
+  const nav = views.map((item) => (
+    <button
+      key={item}
+      title={item === "Action review" ? "Approvals" : item}
+      onClick={() => {
+        setView(item);
+        setMobileNav(false);
+      }}
+      className={`flex min-h-12 w-full items-center gap-3 border-l-2 px-5 text-left text-[13px] transition md:justify-center md:px-0 lg:justify-start lg:px-5 ${view === item ? "border-[var(--wine)] bg-[#f1ebe4] text-[var(--wine)]" : "border-transparent text-[#776d67] hover:bg-[#f5f1eb]"}`}
+    >
+      <Icon name={item} />
+      <span className="md:hidden lg:inline">{item === "Action review" ? "Approvals" : item}</span>
+      {item === "Action review" && approvalCount > 0 && (
+        <span className="ml-auto rounded-full bg-[var(--wine)] px-2 py-0.5 text-[9px] text-white md:absolute md:ml-7 md:mt-[-25px] lg:static lg:ml-auto lg:mt-0">
+          {approvalCount}
+        </span>
+      )}
+    </button>
+  ));
 
-  return <main className="min-h-screen bg-[var(--paper)]">
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[82px] flex-col border-r border-[var(--line)] bg-[#f8f6f1] md:flex lg:w-[210px]"><div className="grid h-[72px] shrink-0 place-items-center border-b border-[var(--line)] lg:flex lg:items-center lg:px-5"><span className="display-type text-2xl text-[var(--wine)] lg:hidden">M</span><div className="hidden lg:block"><Logo/></div></div><div className="hidden px-5 pb-3 pt-5 fine-label text-[#9a9089] lg:block">Workspace</div><nav className="pt-4 lg:pt-0">{nav}</nav><div className="mt-auto border-t border-[var(--line)] p-4"><div className="flex items-center justify-center gap-2 text-[9px] font-bold uppercase tracking-[.12em] text-[var(--sage)] lg:justify-start"><span className="h-2 w-2 rounded-full bg-[#79876f]"/><span className="hidden lg:inline">WebMCP ready</span></div><div className="mt-4 flex items-center justify-center gap-3 lg:justify-start"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--wine)] text-xs font-bold text-white">PB</div><div className="hidden min-w-0 lg:block"><div className="truncate text-sm font-semibold">{data.merchant.name}</div><div className="text-[11px] text-[var(--muted)]">{data.merchant.location}</div></div></div></div></aside>
-    <div className="md:pl-[82px] lg:pl-[210px]"><header className="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-[var(--line)] bg-[#f8f6f1e8] px-5 backdrop-blur-md sm:px-8"><button aria-label={mobileNav ? "Close menu" : "Open menu"} aria-expanded={mobileNav} className="grid h-11 w-11 place-items-center md:hidden" onClick={() => { setMobileNav(!mobileNav); setNotificationsOpen(false); }}><Icon name="menu" size={22}/></button><div className="hidden items-center gap-2 md:flex"><span className="fine-label text-[#9a9089]">Operations</span><span className="text-[#bdb5ad]">/</span><span className="text-xs font-semibold">{view === "Action review" ? "Approvals" : view}</span></div><div className="md:hidden"><Logo compact/></div><div className="relative flex items-center gap-3"><span className="hidden rounded-full border border-[#d9d2ca] bg-[#fbfaf7] px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--sage)] sm:block">Live · D1</span><button aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen(!notificationsOpen); setMobileNav(false); }} className="relative grid h-11 w-11 place-items-center rounded-full border border-[#d9d2ca] bg-[#fbfaf7]"><Icon name="bell" size={17}/><span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-[var(--wine)]"/></button>{notificationsOpen && <div className="absolute right-0 top-14 w-[min(340px,calc(100vw-40px))] border border-[var(--line)] bg-[var(--panel)] p-5 shadow-xl"><p className="fine-label text-[var(--wine)]">Latest activity</p>{data.audit.slice(0,2).map(a=><button key={a.id} onClick={() => { setView("Activity"); setNotificationsOpen(false); }} className="mt-3 block min-h-12 w-full border-t border-[var(--line)] pt-3 text-left"><span className="block text-sm font-semibold">{a.action}</span><span className="mt-1 block text-xs leading-5 text-[var(--muted)]">{a.detail}</span></button>)}</div>}</div></header>{mobileNav && <><button aria-label="Close menu" onClick={() => setMobileNav(false)} className="fixed inset-0 top-[72px] z-20 bg-[#241e1b33] md:hidden"/><div className="fixed inset-x-0 top-[72px] z-30 border-b border-[var(--line)] bg-[#f8f6f1] p-3 shadow-xl md:hidden">{nav}</div></>}
-      <div className="mx-auto max-w-[1320px] px-5 py-7 sm:px-7 lg:px-8 lg:py-8">{view === "Overview" && <Overview data={data} riskProducts={riskProducts} onNavigate={setView} onDraft={() => act({ action: "create_operations_draft", actor: "Human" }, "Draft prepared").then(() => setView("Action review"))}/>} {view === "Orders" && <Orders data={data} busy={busy} onStatus={(orderId, status) => act({ action: "update_order_status", orderId, status, actor: "Human" }, `${orderId} updated`)}/>} {view === "Inventory" && <Inventory data={data} busy={busy} onReceive={(productId, quantity) => act({ action: "receive_inventory", productId, quantity, actor: "Human" }, `${quantity} packs received`)}/>} {view === "Ingredients" && <Ingredients data={data}/>} {view === "Action review" && <ActionReview data={data} busy={busy} onPrepare={() => act({ action: "create_operations_draft", actor: "Human" }, "Draft prepared")} onApprovePlan={(planId) => act({ action: "approve_production_plan", planId, actor: "Human" }, "Production plan approved")} onApprovePurchase={(draftId) => act({ action: "approve_purchase_draft", draftId, actor: "Human" }, "Purchase draft approved")}/>} {view === "Activity" && <Activity data={data}/>}</div>
-    </div>
-    {busy && <div className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-[var(--wine)]"/>}{error && <div role="alert" className="fixed inset-x-5 bottom-5 z-50 border border-[#8d2e32] bg-[#fff8f4] px-5 py-4 text-sm text-[#79262b] sm:left-6 sm:right-auto">{error}</div>}{toast && <div role="status" className="fixed inset-x-5 bottom-5 z-50 border border-[#cabfb2] bg-[#fbfaf7] px-5 py-4 text-sm shadow-xl sm:left-auto sm:right-6"><span className="mr-3 text-[var(--wine)]">●</span>{toast}</div>}
-  </main>;
+  return (
+    <main className="min-h-screen bg-[var(--paper)]">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[82px] flex-col border-r border-[var(--line)] bg-[#f8f6f1] md:flex lg:w-[210px]">
+        <div className="grid h-[72px] shrink-0 place-items-center border-b border-[var(--line)] lg:flex lg:items-center lg:px-5">
+          <span className="display-type text-2xl text-[var(--wine)] lg:hidden">M</span>
+          <div className="hidden lg:block">
+            <Logo />
+          </div>
+        </div>
+        <div className="hidden px-5 pb-3 pt-5 fine-label text-[#9a9089] lg:block">Workspace</div>
+        <nav className="pt-4 lg:pt-0">{nav}</nav>
+        <div className="mt-auto border-t border-[var(--line)] p-4">
+          <div className="flex items-center justify-center gap-2 text-[9px] font-bold uppercase tracking-[.12em] text-[var(--sage)] lg:justify-start">
+            <span className="h-2 w-2 rounded-full bg-[#79876f]" />
+            <span className="hidden lg:inline">WebMCP ready</span>
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-3 lg:justify-start">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--wine)] text-xs font-bold text-white">
+              PB
+            </div>
+            <div className="hidden min-w-0 lg:block">
+              <div className="truncate text-sm font-semibold">{data.merchant.name}</div>
+              <div className="text-[11px] text-[var(--muted)]">{data.merchant.location}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <div className="md:pl-[82px] lg:pl-[210px]">
+        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-[var(--line)] bg-[#f8f6f1e8] px-5 backdrop-blur-md sm:px-8">
+          <button
+            aria-label={mobileNav ? "Close menu" : "Open menu"}
+            aria-expanded={mobileNav}
+            className="grid h-11 w-11 place-items-center md:hidden"
+            onClick={() => {
+              setMobileNav(!mobileNav);
+              setNotificationsOpen(false);
+            }}
+          >
+            <Icon name="menu" size={22} />
+          </button>
+          <div className="hidden items-center gap-2 md:flex">
+            <span className="fine-label text-[#9a9089]">Operations</span>
+            <span className="text-[#bdb5ad]">/</span>
+            <span className="text-xs font-semibold">
+              {view === "Action review" ? "Approvals" : view}
+            </span>
+          </div>
+          <div className="md:hidden">
+            <Logo compact />
+          </div>
+          <div className="relative flex items-center gap-3">
+            <span className="hidden rounded-full border border-[#d9d2ca] bg-[#fbfaf7] px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--sage)] sm:block">
+              Live · D1
+            </span>
+            <button
+              aria-label="Notifications"
+              aria-expanded={notificationsOpen}
+              onClick={() => {
+                setNotificationsOpen(!notificationsOpen);
+                setMobileNav(false);
+              }}
+              className="relative grid h-11 w-11 place-items-center rounded-full border border-[#d9d2ca] bg-[#fbfaf7]"
+            >
+              <Icon name="bell" size={17} />
+              <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-[var(--wine)]" />
+            </button>
+            {notificationsOpen && (
+              <div className="absolute right-0 top-14 w-[min(340px,calc(100vw-40px))] border border-[var(--line)] bg-[var(--panel)] p-5 shadow-xl">
+                <p className="fine-label text-[var(--wine)]">Latest activity</p>
+                {data.audit.slice(0, 2).map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => {
+                      setView("Activity");
+                      setNotificationsOpen(false);
+                    }}
+                    className="mt-3 block min-h-12 w-full border-t border-[var(--line)] pt-3 text-left"
+                  >
+                    <span className="block text-sm font-semibold">{a.action}</span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                      {a.detail}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </header>
+        {mobileNav && (
+          <>
+            <button
+              aria-label="Close menu"
+              onClick={() => setMobileNav(false)}
+              className="fixed inset-0 top-[72px] z-20 bg-[#241e1b33] md:hidden"
+            />
+            <div className="fixed inset-x-0 top-[72px] z-30 border-b border-[var(--line)] bg-[#f8f6f1] p-3 shadow-xl md:hidden">
+              {nav}
+            </div>
+          </>
+        )}
+        <div className="mx-auto max-w-[1320px] px-5 py-7 sm:px-7 lg:px-8 lg:py-8">
+          {view === "Overview" && (
+            <Overview
+              data={data}
+              riskProducts={riskProducts}
+              onNavigate={setView}
+              onDraft={() =>
+                act({ action: "create_operations_draft", actor: "Human" }, "Draft prepared").then(
+                  () => setView("Action review"),
+                )
+              }
+            />
+          )}{" "}
+          {view === "Orders" && (
+            <Orders
+              data={data}
+              busy={busy}
+              onStatus={(orderId, status) =>
+                act(
+                  { action: "update_order_status", orderId, status, actor: "Human" },
+                  `${orderId} updated`,
+                )
+              }
+            />
+          )}{" "}
+          {view === "Inventory" && (
+            <Inventory
+              data={data}
+              busy={busy}
+              onReceive={(productId, quantity) =>
+                act(
+                  { action: "receive_inventory", productId, quantity, actor: "Human" },
+                  `${quantity} packs received`,
+                )
+              }
+            />
+          )}{" "}
+          {view === "Ingredients" && <Ingredients data={data} />}{" "}
+          {view === "Action review" && (
+            <ActionReview
+              data={data}
+              busy={busy}
+              onPrepare={() =>
+                act({ action: "create_operations_draft", actor: "Human" }, "Draft prepared")
+              }
+              onApprovePlan={(planId) =>
+                act(
+                  { action: "approve_production_plan", planId, actor: "Human" },
+                  "Production plan approved",
+                )
+              }
+              onApprovePurchase={(draftId) =>
+                act(
+                  { action: "approve_purchase_draft", draftId, actor: "Human" },
+                  "Purchase draft approved",
+                )
+              }
+            />
+          )}{" "}
+          {view === "Activity" && <Activity data={data} />}
+        </div>
+      </div>
+      {busy && <div className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-[var(--wine)]" />}
+      {error && (
+        <div
+          role="alert"
+          className="fixed inset-x-5 bottom-5 z-50 border border-[#8d2e32] bg-[#fff8f4] px-5 py-4 text-sm text-[#79262b] sm:left-6 sm:right-auto"
+        >
+          {error}
+        </div>
+      )}
+      {toast && (
+        <div
+          role="status"
+          className="fixed inset-x-5 bottom-5 z-50 border border-[#cabfb2] bg-[#fbfaf7] px-5 py-4 text-sm shadow-xl sm:left-auto sm:right-6"
+        >
+          <span className="mr-3 text-[var(--wine)]">●</span>
+          {toast}
+        </div>
+      )}
+    </main>
+  );
 }
 
-function Logo({ compact = false }: { compact?: boolean }) { return <div><div className="display-type text-[23px] leading-none">Merchant<span className="text-[var(--wine)]">OS</span></div>{!compact && <div className="mt-1 max-w-[160px] text-[7px] font-bold uppercase leading-[1.35] tracking-[.2em] text-[#8b8079]">Operate clearly. Decide confidently.</div>}</div>; }
-function Title({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy: string; action?: React.ReactNode }) { return <section className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="fine-label text-[var(--wine)]">{eyebrow}</p><h1 className="display-type mt-2 text-[34px] leading-[1.05] sm:text-[40px] lg:text-[44px]">{title}</h1><p className="mt-3 max-w-2xl text-[15px] leading-6 text-[var(--muted)]">{copy}</p></div>{action}</section>; }
-function Metric({ label, value, note, alert }: { label: string; value: string; note: string; alert?: boolean }) { return <div className="border-b border-r border-[var(--line)] p-4 even:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 sm:p-6 xl:border-b-0 xl:border-r xl:last:border-r-0"><p className="fine-label min-h-6 text-[#8b817b]">{label}</p><div className="display-type mt-3 text-[29px] sm:mt-5 sm:text-[34px]">{value}</div><p className={`mt-2 text-[10px] leading-4 sm:mt-3 sm:text-[11px] ${alert ? "text-[var(--wine)]" : "text-[var(--muted)]"}`}>{note}</p></div>; }
-function Section({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) { return <section className="border border-[var(--line)] bg-[var(--panel)]"><div className="border-b border-[var(--line)] p-6"><p className="fine-label text-[#8b817b]">{eyebrow}</p><h2 className="display-type mt-2 text-2xl">{title}</h2></div>{children}</section>; }
+function Logo({ compact = false }: { compact?: boolean }) {
+  return (
+    <div>
+      <div className="display-type text-[23px] leading-none">
+        Merchant<span className="text-[var(--wine)]">OS</span>
+      </div>
+      {!compact && (
+        <div className="mt-1 max-w-[160px] text-[7px] font-bold uppercase leading-[1.35] tracking-[.2em] text-[#8b8079]">
+          Operate clearly. Decide confidently.
+        </div>
+      )}
+    </div>
+  );
+}
+function Title({
+  eyebrow,
+  title,
+  copy,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  copy: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <section className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+      <div>
+        <p className="fine-label text-[var(--wine)]">{eyebrow}</p>
+        <h1 className="display-type mt-2 text-[34px] leading-[1.05] sm:text-[40px] lg:text-[44px]">
+          {title}
+        </h1>
+        <p className="mt-3 max-w-2xl text-[15px] leading-6 text-[var(--muted)]">{copy}</p>
+      </div>
+      {action}
+    </section>
+  );
+}
+function Metric({
+  label,
+  value,
+  note,
+  alert,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  alert?: boolean;
+}) {
+  return (
+    <div className="border-b border-r border-[var(--line)] p-4 even:border-r-0 [&:nth-last-child(-n+2)]:border-b-0 sm:p-6 xl:border-b-0 xl:border-r xl:last:border-r-0">
+      <p className="fine-label min-h-6 text-[#8b817b]">{label}</p>
+      <div className="display-type mt-3 text-[29px] sm:mt-5 sm:text-[34px]">{value}</div>
+      <p
+        className={`mt-2 text-[10px] leading-4 sm:mt-3 sm:text-[11px] ${alert ? "text-[var(--wine)]" : "text-[var(--muted)]"}`}
+      >
+        {note}
+      </p>
+    </div>
+  );
+}
+function Section({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border border-[var(--line)] bg-[var(--panel)]">
+      <div className="border-b border-[var(--line)] p-6">
+        <p className="fine-label text-[#8b817b]">{eyebrow}</p>
+        <h2 className="display-type mt-2 text-2xl">{title}</h2>
+      </div>
+      {children}
+    </section>
+  );
+}
 
-function Overview({ data, riskProducts, onDraft, onNavigate }: { data: OperationsData; riskProducts: Product[]; onDraft: () => void; onNavigate:(view:View)=>void }) { const approvals=data.productionPlans.filter(p=>p.status==="Draft").length+data.purchaseDrafts.filter(p=>p.status==="Draft").length; return <div className="animate-rise"><Title eyebrow="Today · Live operations" title={`Good morning, ${data.merchant.name}.`} copy="Start with what needs attention, then move directly into the work."/><div className="grid gap-3 sm:grid-cols-3"><QuickTask value={data.metrics.awaitingFulfillment} label="Orders need attention" note={`${data.metrics.readyToShip} ready to ship`} onClick={()=>onNavigate("Orders")}/><QuickTask value={data.metrics.needsAttention} label="Stock risks" note="Review production cover" alert onClick={()=>onNavigate("Inventory")}/><QuickTask value={approvals} label="Approvals" note={approvals ? "Waiting for your decision" : "Nothing waiting"} onClick={()=>onNavigate("Action review")}/></div><div className="mt-5 grid gap-5 lg:grid-cols-[1.15fr_.85fr]"><div className="border border-[var(--line)] bg-[var(--wine)] p-6 text-white sm:p-7"><p className="fine-label text-[#d8b9b5]">Next recommended action</p><h2 className="display-type mt-4 text-[30px]">{riskProducts[0]?.name ?? "Operations are covered"}</h2><p className="mt-3 max-w-xl text-[15px] leading-6 text-[#eaded7]">{riskProducts.length ? `${riskProducts.length} products cannot maintain one day of demand cover. Prepare a coordinated production and ingredient plan.` : "Finished goods cover committed orders and expected daily demand."}</p><button onClick={onDraft} className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 border border-[#ffffff66] px-5 text-xs font-bold uppercase tracking-[.12em] transition hover:bg-white hover:text-[var(--wine)] sm:w-auto">Review recommendation <span aria-hidden="true">→</span></button></div><div className="border border-[var(--line)] bg-[var(--panel)] p-6 sm:p-7"><p className="fine-label text-[#8b817b]">Ready to ship</p><div className="display-type mt-4 text-[38px]">{data.metrics.readyToShip} orders</div><p className="mt-2 text-sm text-[var(--muted)]">Part of a {money(data.metrics.queueValue)} active queue.</p><button onClick={()=>onNavigate("Orders")} className="mt-6 min-h-12 w-full border border-[var(--ink)] px-5 text-xs font-bold uppercase tracking-[.12em]">Open fulfilment queue</button></div></div><details className="mt-5 border border-[var(--line)] bg-[var(--panel)]"><summary className="flex min-h-14 cursor-pointer items-center justify-between px-6 text-sm font-semibold">Business trend <span className="fine-label text-[var(--muted)]">14 days</span></summary><div className="border-t border-[var(--line)]"><div className="flex h-[180px] items-end gap-2 px-6 pb-6 pt-8">{salesBars.map((h,i)=><div key={i} className="flex h-full flex-1 items-end"><div className={`w-full ${i===13?"bg-[var(--wine)]":"bg-[#d9cfc3]"}`} style={{height:`${h}%`}}/></div>)}</div></div></details><div className="mt-5"><Section eyebrow="Latest activity" title="Accountability at a glance"><AuditList data={data}/></Section></div></div>; }
+function Overview({
+  data,
+  riskProducts,
+  onDraft,
+  onNavigate,
+}: {
+  data: OperationsData;
+  riskProducts: Product[];
+  onDraft: () => void;
+  onNavigate: (view: View) => void;
+}) {
+  const approvals =
+    data.productionPlans.filter((p) => p.status === "Draft").length +
+    data.purchaseDrafts.filter((p) => p.status === "Draft").length;
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Today · Live operations"
+        title={`Good morning, ${data.merchant.name}.`}
+        copy="Start with what needs attention, then move directly into the work."
+      />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <QuickTask
+          value={data.metrics.awaitingFulfillment}
+          label="Orders need attention"
+          note={`${data.metrics.readyToShip} ready to ship`}
+          onClick={() => onNavigate("Orders")}
+        />
+        <QuickTask
+          value={data.metrics.needsAttention}
+          label="Stock risks"
+          note="Review production cover"
+          alert
+          onClick={() => onNavigate("Inventory")}
+        />
+        <QuickTask
+          value={approvals}
+          label="Approvals"
+          note={approvals ? "Waiting for your decision" : "Nothing waiting"}
+          onClick={() => onNavigate("Action review")}
+        />
+      </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
+        <div className="border border-[var(--line)] bg-[var(--wine)] p-6 text-white sm:p-7">
+          <p className="fine-label text-[#d8b9b5]">Next recommended action</p>
+          <h2 className="display-type mt-4 text-[30px]">
+            {riskProducts[0]?.name ?? "Operations are covered"}
+          </h2>
+          <p className="mt-3 max-w-xl text-[15px] leading-6 text-[#eaded7]">
+            {riskProducts.length
+              ? `${riskProducts.length} products cannot maintain one day of demand cover. Prepare a coordinated production and ingredient plan.`
+              : "Finished goods cover committed orders and expected daily demand."}
+          </p>
+          <button
+            onClick={onDraft}
+            className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 border border-[#ffffff66] px-5 text-xs font-bold uppercase tracking-[.12em] transition hover:bg-white hover:text-[var(--wine)] sm:w-auto"
+          >
+            Review recommendation <span aria-hidden="true">→</span>
+          </button>
+        </div>
+        <div className="border border-[var(--line)] bg-[var(--panel)] p-6 sm:p-7">
+          <p className="fine-label text-[#8b817b]">Ready to ship</p>
+          <div className="display-type mt-4 text-[38px]">{data.metrics.readyToShip} orders</div>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Part of a {money(data.metrics.queueValue)} active queue.
+          </p>
+          <button
+            onClick={() => onNavigate("Orders")}
+            className="mt-6 min-h-12 w-full border border-[var(--ink)] px-5 text-xs font-bold uppercase tracking-[.12em]"
+          >
+            Open fulfilment queue
+          </button>
+        </div>
+      </div>
+      <details className="mt-5 border border-[var(--line)] bg-[var(--panel)]">
+        <summary className="flex min-h-14 cursor-pointer items-center justify-between px-6 text-sm font-semibold">
+          Business trend <span className="fine-label text-[var(--muted)]">14 days</span>
+        </summary>
+        <div className="border-t border-[var(--line)]">
+          <div className="flex h-[180px] items-end gap-2 px-6 pb-6 pt-8">
+            {salesBars.map((h, i) => (
+              <div key={i} className="flex h-full flex-1 items-end">
+                <div
+                  className={`w-full ${i === 13 ? "bg-[var(--wine)]" : "bg-[#d9cfc3]"}`}
+                  style={{ height: `${h}%` }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </details>
+      <div className="mt-5">
+        <Section eyebrow="Latest activity" title="Accountability at a glance">
+          <AuditList data={data} />
+        </Section>
+      </div>
+    </div>
+  );
+}
 
-function QuickTask({value,label,note,alert,onClick}:{value:number;label:string;note:string;alert?:boolean;onClick:()=>void}) { return <button onClick={onClick} className="group min-h-[126px] border border-[var(--line)] bg-[var(--panel)] p-5 text-left transition hover:border-[var(--wine)]"><div className="flex items-start justify-between"><span className={`display-type text-[34px] ${alert?"text-[var(--wine)]":""}`}>{value}</span><span aria-hidden="true" className="text-lg text-[var(--muted)] transition group-hover:translate-x-1 group-hover:text-[var(--wine)]">→</span></div><strong className="mt-2 block text-sm">{label}</strong><span className={`mt-1 block text-xs ${alert?"text-[var(--wine)]":"text-[var(--muted)]"}`}>{note}</span></button>; }
+function QuickTask({
+  value,
+  label,
+  note,
+  alert,
+  onClick,
+}: {
+  value: number;
+  label: string;
+  note: string;
+  alert?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="group min-h-[126px] border border-[var(--line)] bg-[var(--panel)] p-5 text-left transition hover:border-[var(--wine)]"
+    >
+      <div className="flex items-start justify-between">
+        <span className={`display-type text-[34px] ${alert ? "text-[var(--wine)]" : ""}`}>
+          {value}
+        </span>
+        <span
+          aria-hidden="true"
+          className="text-lg text-[var(--muted)] transition group-hover:translate-x-1 group-hover:text-[var(--wine)]"
+        >
+          →
+        </span>
+      </div>
+      <strong className="mt-2 block text-sm">{label}</strong>
+      <span
+        className={`mt-1 block text-xs ${alert ? "text-[var(--wine)]" : "text-[var(--muted)]"}`}
+      >
+        {note}
+      </span>
+    </button>
+  );
+}
 
-function statusStyle(status: OrderStatus) { return status === "Ready" ? "bg-[#e5eadf] text-[#596450]" : status === "Packing" ? "bg-[#eee8d8] text-[#756438]" : status === "On hold" ? "bg-[#f0dedb] text-[#812d32]" : "bg-[#e7e4e0] text-[#67605b]"; }
-function nextStatus(status:OrderStatus):OrderStatus|null { return status==="Ready"?"Packing":status==="Packing"?"Shipped":status==="On hold"?"Ready":null; }
-function nextLabel(status:OrderStatus) { return status==="Ready"?"Start packing":status==="Packing"?"Mark as shipped":status==="On hold"?"Resolve hold":"Order completed"; }
-function Orders({ data, busy, onStatus }: { data: OperationsData; busy:boolean; onStatus: (id: string, status: OrderStatus) => void }) { const [filter,setFilter]=useState("All"); const [selectedId,setSelectedId]=useState(data.orders[0]?.id); const [confirm,setConfirm]=useState<{order:Order;status:OrderStatus}|null>(null); const orders=filter==="All"?data.orders:data.orders.filter(o=>o.status===filter); const selected=data.orders.find(o=>o.id===selectedId)??orders[0]; const choose=(o:Order)=>setSelectedId(o.id); return <div className="animate-rise"><Title eyebrow="Fulfilment workspace" title="Move orders forward." copy="Select an order, review the details, then take the next guided action."/><div className="scrollbar-none mb-4 flex gap-2 overflow-x-auto pb-1">{["All","Ready","Packing","On hold","Shipped"].map(f=><button key={f} onClick={()=>setFilter(f)} className={`min-h-11 shrink-0 border px-4 text-[10px] font-bold uppercase tracking-wider ${filter===f?"border-[var(--wine)] bg-[var(--wine)] text-white":"border-[var(--line)] bg-[var(--panel)]"}`}>{f}</button>)}</div><div className="grid border border-[var(--line)] bg-[var(--panel)] md:grid-cols-[minmax(260px,34%)_1fr]"><div className="border-b border-[var(--line)] md:max-h-[650px] md:overflow-y-auto md:border-b-0 md:border-r">{orders.map(o=><button key={o.id} onClick={()=>choose(o)} className={`flex min-h-[92px] w-full items-center justify-between gap-3 border-b border-[var(--line)] p-4 text-left last:border-b-0 ${selected?.id===o.id?"bg-[#f1ebe4] shadow-[inset_3px_0_var(--wine)]":"hover:bg-[#f7f3ee]"}`}><div className="min-w-0"><div className="flex items-center gap-2"><b className="text-xs text-[var(--wine)]">{o.id}</b><StatusPill status={o.status}/></div><div className="mt-2 truncate text-sm font-semibold">{o.customer}</div><div className="mt-1 truncate text-xs text-[var(--muted)]">{o.items}</div></div><b className="shrink-0 text-sm">{money(o.total)}</b></button>)}</div>{selected&&<OrderDetail order={selected} busy={busy} onRequest={status=>setConfirm({order:selected,status})}/>}</div>{confirm&&<ConfirmStatus order={confirm.order} status={confirm.status} busy={busy} onCancel={()=>setConfirm(null)} onConfirm={()=>{onStatus(confirm.order.id,confirm.status);setConfirm(null);}}/>}</div>; }
+function statusStyle(status: OrderStatus) {
+  return status === "Ready"
+    ? "bg-[#e5eadf] text-[#596450]"
+    : status === "Packing"
+      ? "bg-[#eee8d8] text-[#756438]"
+      : status === "On hold"
+        ? "bg-[#f0dedb] text-[#812d32]"
+        : "bg-[#e7e4e0] text-[#67605b]";
+}
+function nextStatus(status: OrderStatus): OrderStatus | null {
+  return status === "Ready"
+    ? "Packing"
+    : status === "Packing"
+      ? "Shipped"
+      : status === "On hold"
+        ? "Ready"
+        : null;
+}
+function nextLabel(status: OrderStatus) {
+  return status === "Ready"
+    ? "Start packing"
+    : status === "Packing"
+      ? "Mark as shipped"
+      : status === "On hold"
+        ? "Resolve hold"
+        : "Order completed";
+}
+function Orders({
+  data,
+  busy,
+  onStatus,
+}: {
+  data: OperationsData;
+  busy: boolean;
+  onStatus: (id: string, status: OrderStatus) => void;
+}) {
+  const [filter, setFilter] = useState("All");
+  const [selectedId, setSelectedId] = useState(data.orders[0]?.id);
+  const [confirm, setConfirm] = useState<{ order: Order; status: OrderStatus } | null>(null);
+  const orders = filter === "All" ? data.orders : data.orders.filter((o) => o.status === filter);
+  const selected = data.orders.find((o) => o.id === selectedId) ?? orders[0];
+  const choose = (o: Order) => setSelectedId(o.id);
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Fulfilment workspace"
+        title="Move orders forward."
+        copy="Select an order, review the details, then take the next guided action."
+      />
+      <div className="scrollbar-none mb-4 flex gap-2 overflow-x-auto pb-1">
+        {["All", "Ready", "Packing", "On hold", "Shipped"].map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`min-h-11 shrink-0 border px-4 text-[10px] font-bold uppercase tracking-wider ${filter === f ? "border-[var(--wine)] bg-[var(--wine)] text-white" : "border-[var(--line)] bg-[var(--panel)]"}`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <div className="grid border border-[var(--line)] bg-[var(--panel)] md:grid-cols-[minmax(260px,34%)_1fr]">
+        <div className="border-b border-[var(--line)] md:max-h-[650px] md:overflow-y-auto md:border-b-0 md:border-r">
+          {orders.map((o) => (
+            <button
+              key={o.id}
+              onClick={() => choose(o)}
+              className={`flex min-h-[92px] w-full items-center justify-between gap-3 border-b border-[var(--line)] p-4 text-left last:border-b-0 ${selected?.id === o.id ? "bg-[#f1ebe4] shadow-[inset_3px_0_var(--wine)]" : "hover:bg-[#f7f3ee]"}`}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <b className="text-xs text-[var(--wine)]">{o.id}</b>
+                  <StatusPill status={o.status} />
+                </div>
+                <div className="mt-2 truncate text-sm font-semibold">{o.customer}</div>
+                <div className="mt-1 truncate text-xs text-[var(--muted)]">{o.items}</div>
+              </div>
+              <b className="shrink-0 text-sm">{money(o.total)}</b>
+            </button>
+          ))}
+        </div>
+        {selected && (
+          <OrderDetail
+            order={selected}
+            busy={busy}
+            onRequest={(status) => setConfirm({ order: selected, status })}
+          />
+        )}
+      </div>
+      {confirm && (
+        <ConfirmStatus
+          order={confirm.order}
+          status={confirm.status}
+          busy={busy}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            onStatus(confirm.order.id, confirm.status);
+            setConfirm(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
-function StatusPill({status}:{status:OrderStatus}) { return <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider ${statusStyle(status)}`}>{status}</span>; }
-function OrderDetail({order,busy,onRequest}:{order:Order;busy:boolean;onRequest:(status:OrderStatus)=>void}) { const next=nextStatus(order.status); return <section className="p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="fine-label text-[var(--wine)]">Selected order</p><h2 className="display-type mt-2 text-[30px]">{order.customer}</h2><p className="mt-1 text-xs text-[var(--muted)]">{order.id} · {order.channel}</p></div><StatusPill status={order.status}/></div><div className="mt-7 grid grid-cols-2 gap-4 border-y border-[var(--line)] py-5"><div><p className="fine-label text-[#91867e]">Items</p><p className="mt-2 text-sm leading-6">{order.items}</p></div><div><p className="fine-label text-[#91867e]">Order total</p><p className="display-type mt-2 text-2xl">{money(order.total)}</p></div></div>{next&&<button disabled={busy} onClick={()=>onRequest(next)} className="mt-6 min-h-12 w-full bg-[var(--wine)] px-5 text-xs font-bold uppercase tracking-[.12em] text-white disabled:opacity-50">{nextLabel(order.status)} →</button>}<div className="mt-3 grid grid-cols-2 gap-3"><button disabled={busy||order.status==="On hold"||order.status==="Shipped"} onClick={()=>onRequest("On hold")} className="min-h-12 border border-[var(--line)] px-3 text-xs font-semibold disabled:opacity-40">Put on hold</button><button disabled={busy||order.status==="Ready"} onClick={()=>onRequest("Ready")} className="min-h-12 border border-[var(--line)] px-3 text-xs font-semibold disabled:opacity-40">Return to ready</button></div><p className="mt-5 text-xs leading-5 text-[var(--muted)]">Every change is saved immediately and attributed to you in the activity log.</p></section>; }
-function ConfirmStatus({order,status,busy,onCancel,onConfirm}:{order:Order;status:OrderStatus;busy:boolean;onCancel:()=>void;onConfirm:()=>void}) { return <div className="fixed inset-0 z-50 grid place-items-end bg-[#241e1b55] p-0 sm:place-items-center sm:p-6"><div role="dialog" aria-modal="true" aria-labelledby="confirm-title" className="w-full border border-[var(--line)] bg-[var(--panel)] p-6 shadow-2xl sm:max-w-md"><p className="fine-label text-[var(--wine)]">Confirm status change</p><h2 id="confirm-title" className="display-type mt-3 text-2xl">Move {order.id} to {status}?</h2><p className="mt-3 text-sm leading-6 text-[var(--muted)]">This updates the live fulfilment queue and records the action in the audit trail.</p><div className="mt-6 grid grid-cols-2 gap-3"><button onClick={onCancel} className="min-h-12 border border-[var(--line)] text-xs font-bold uppercase tracking-wider">Cancel</button><button disabled={busy} onClick={onConfirm} className="min-h-12 bg-[var(--wine)] text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50">Confirm change</button></div></div></div>; }
-function Inventory({ data, busy, onReceive }: { data: OperationsData; busy:boolean; onReceive: (id:string,quantity:number)=>void }) { const [receiving,setReceiving]=useState<Product|null>(null); return <div className="animate-rise"><Title eyebrow="Finished goods" title="See risk. Take action." copy="Available stock, committed demand and the next operational step are visible at a glance."/><div className="grid items-stretch gap-4 md:grid-cols-2">{data.products.map(p=>{const free=p.stock-p.committed;const shortage=Math.max(0,p.dailySales-free);const risk=shortage>0;return <article key={p.id} className={`flex h-full flex-col border bg-[var(--panel)] p-5 sm:p-6 ${risk?"border-[#b98687]":"border-[var(--line)]"}`}><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 gap-4"><div className="h-12 w-12 shrink-0 rotate-3 rounded-xl" style={{background:p.tone}}/><div className="min-w-0"><h2 className="display-type text-[23px] leading-tight">{p.name}</h2><p className="mt-1 text-[10px] tracking-widest text-[var(--muted)]">{p.sku}</p></div></div><span className={`shrink-0 rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${risk?"bg-[#f0dedb] text-[var(--wine)]":"bg-[#e5eadf] text-[#596450]"}`}>{risk?"At risk":"Covered"}</span></div><div className="mt-6 grid grid-cols-3 border-y border-[var(--line)] py-4">{[["Available",p.stock],["Committed",p.committed],["Free",free]].map(([l,v])=><div key={l}><div className="fine-label text-[#91867f]">{l}</div><div className="display-type mt-2 text-2xl">{v}</div></div>)}</div><div className={`mt-5 min-h-[74px] rounded-sm p-4 ${risk?"bg-[#f6e9e6]":"bg-[#edf1e9]"}`}>{risk?<><p className="text-sm font-bold text-[var(--wine)]">Short by {shortage} packs for one day of cover</p><p className="mt-1 text-xs text-[var(--muted)]">Batch yield: {p.batchYield} packs</p></>:<><p className="text-sm font-bold text-[#596450]">Demand is covered</p><p className="mt-1 text-xs text-[var(--muted)]">{free} packs remain after commitments</p></>}</div><button onClick={()=>setReceiving(p)} className="mt-5 min-h-12 w-full border border-[var(--ink)] px-5 text-xs font-bold uppercase tracking-[.12em]">Receive stock</button></article>})}</div>{receiving&&<ReceiveStock product={receiving} busy={busy} onCancel={()=>setReceiving(null)} onReceive={quantity=>{onReceive(receiving.id,quantity);setReceiving(null);}}/>}</div>; }
-function ReceiveStock({product,busy,onCancel,onReceive}:{product:Product;busy:boolean;onCancel:()=>void;onReceive:(quantity:number)=>void}) { const [quantity,setQuantity]=useState(product.batchYield); return <div className="fixed inset-0 z-50 grid place-items-end bg-[#241e1b55] sm:place-items-center sm:p-6"><div role="dialog" aria-modal="true" aria-labelledby="receive-title" className="w-full border border-[var(--line)] bg-[var(--panel)] p-6 shadow-2xl sm:max-w-md"><p className="fine-label text-[var(--wine)]">Receive finished goods</p><h2 id="receive-title" className="display-type mt-3 text-2xl">{product.name}</h2><label className="mt-6 block text-xs font-bold uppercase tracking-wider" htmlFor="receive-quantity">Quantity received</label><div className="mt-3 flex items-center gap-3"><button aria-label="Decrease quantity" onClick={()=>setQuantity(Math.max(1,quantity-1))} className="grid h-12 w-12 place-items-center border border-[var(--line)] text-xl">−</button><input id="receive-quantity" inputMode="numeric" min="1" type="number" value={quantity} onChange={e=>setQuantity(Math.max(1,Number(e.target.value)||1))} className="h-12 min-w-0 flex-1 border border-[var(--line)] bg-white px-4 text-center text-lg font-semibold"/><button aria-label="Increase quantity" onClick={()=>setQuantity(quantity+1)} className="grid h-12 w-12 place-items-center border border-[var(--line)] text-xl">+</button></div><p className="mt-2 text-xs text-[var(--muted)]">Typical batch: {product.batchYield} packs</p><div className="mt-6 grid grid-cols-2 gap-3"><button onClick={onCancel} className="min-h-12 border border-[var(--line)] text-xs font-bold uppercase tracking-wider">Cancel</button><button disabled={busy} onClick={()=>onReceive(quantity)} className="min-h-12 bg-[var(--wine)] text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50">Add to stock</button></div></div></div>; }
-function Ingredients({ data }: { data: OperationsData }) { return <div className="animate-rise"><Title eyebrow="Recipes + suppliers" title="Know whether the bake is possible." copy="Ingredient thresholds and assigned suppliers let the agent connect production recommendations to purchasing needs."/><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data.ingredients.map(i=>{const low=i.stock<=i.reorderLevel;return <article key={i.id} className="border border-[var(--line)] bg-[var(--panel)] p-6"><div className="flex justify-between"><p className="fine-label text-[#8b817b]">{i.supplierName}</p>{low&&<span className="fine-label text-[var(--wine)]">Reorder</span>}</div><h2 className="display-type mt-4 text-2xl">{i.name}</h2><div className="mt-6 flex items-end justify-between border-t border-[var(--line)] pt-5"><div><span className="display-type text-3xl">{i.stock}</span><span className="ml-1 text-xs text-[var(--muted)]">{i.unit}</span></div><p className="text-[10px] text-[var(--muted)]">Reorder at {i.reorderLevel}{i.unit}</p></div></article>})}</div></div>; }
-function ActionReview({ data, busy, onPrepare, onApprovePlan, onApprovePurchase }: { data:OperationsData;busy:boolean;onPrepare:()=>void;onApprovePlan:(id:string)=>void;onApprovePurchase:(id:string)=>void }) { const plans=data.productionPlans; const drafts=data.purchaseDrafts; return <div className="animate-rise"><Title eyebrow="Approval inbox" title="Review, then decide." copy="Nothing is approved or sent without you. Open items are shown first and every decision is recorded."/>{plans.length===0&&drafts.length===0?<EmptyReview busy={busy} onPrepare={onPrepare}/>:<div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]"><Section eyebrow={`${plans.filter(p=>p.status==="Draft").length} open`} title="Production plans">{plans.map(p=><div key={p.id} className="border-b border-[var(--line)] p-6 last:border-0"><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold">{p.id}</div><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{p.rationale}</p></div><Badge status={p.status}/></div><div className="my-5 space-y-3">{p.items.map(i=><div key={i.productId} className="flex justify-between gap-4 text-sm"><span>{i.productName}</span><b className="shrink-0">{i.batches} batch{i.batches===1?"":"es"}</b></div>)}</div>{p.status==="Draft"&&<button disabled={busy} onClick={()=>onApprovePlan(p.id)} className="min-h-12 w-full bg-[var(--wine)] px-4 text-xs font-bold uppercase tracking-widest text-white disabled:opacity-50">Approve production plan</button>}</div>)}</Section><Section eyebrow={`${drafts.filter(d=>d.status==="Draft").length} open`} title="Purchase drafts">{drafts.map(d=><div key={d.id} className="border-b border-[var(--line)] p-6 last:border-0"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold">{d.ingredientName}</div><div className="mt-1 text-[10px] text-[var(--muted)]">{d.supplierName} · {d.id}</div></div><Badge status={d.status}/></div><div className="my-5 flex justify-between border-y border-[var(--line)] py-4 text-sm"><span>{d.quantity}{d.unit}</span><b>{money(d.estimatedCost)}</b></div>{d.status==="Draft"&&<button disabled={busy} onClick={()=>onApprovePurchase(d.id)} className="min-h-12 w-full border border-[var(--ink)] px-4 text-xs font-bold uppercase tracking-widest disabled:opacity-50">Approve purchase draft</button>}<p className="mt-3 text-[10px] leading-5 text-[var(--muted)]">Approval is recorded, but no supplier order is transmitted in this demo.</p></div>)}</Section></div>}</div>; }
-function EmptyReview({busy,onPrepare}:{busy:boolean;onPrepare:()=>void}){return <div className="grid min-h-[320px] place-items-center border border-[var(--line)] bg-[var(--panel)] p-6 text-center"><div className="max-w-sm"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[#f0dedb] text-[var(--wine)]"><Icon name="Action review" size={22}/></span><h2 className="display-type mt-5 text-2xl">Nothing is waiting.</h2><p className="mt-3 text-sm leading-6 text-[var(--muted)]">Run a live operational analysis to prepare production and purchasing drafts for your review.</p><button disabled={busy} onClick={onPrepare} className="mt-6 bg-[var(--wine)] px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:opacity-50">Prepare actions</button></div></div>}
-function Badge({status}:{status:string}){return <span className={`w-fit shrink-0 self-start rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${status==="Approved"?"bg-[#e5eadf] text-[#596450]":"bg-[#f0dedb] text-[#812d32]"}`}>{status}</span>}
-function ActorBadge({actor}:{actor:string}) { const tone=actor==="Agent"?"bg-[#eadfe0] text-[var(--wine)]":actor==="Human"?"bg-[#e5eadf] text-[#596450]":"bg-[#e9e6e2] text-[#67605b]"; return <span className={`inline-flex w-fit shrink-0 items-center justify-center self-start rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider sm:w-[78px] ${tone}`}>{actor}</span>; }
-function AuditList({data}:{data:OperationsData}) { return <div>{data.audit.slice(0,6).map(a=><div key={a.id} className="grid gap-2 border-b border-[var(--line)] p-5 last:border-0 sm:grid-cols-[90px_1fr_auto]"><ActorBadge actor={a.actor}/><div><div className="text-sm font-semibold">{a.action}</div><div className="mt-1 text-xs text-[var(--muted)]">{a.detail}</div></div><time className="text-[10px] text-[var(--muted)] sm:whitespace-nowrap">{new Date(a.createdAt).toLocaleString("en-MY",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</time></div>)}</div> }
-function Activity({data}:{data:OperationsData}) { return <div className="animate-rise"><Title eyebrow="Accountability" title="Every decision leaves a trace." copy="Persistent history distinguishes automated detection, agent proposals and human approvals."/><Section eyebrow="Latest first" title="Operations audit"><AuditList data={data}/></Section></div>; }
+function StatusPill({ status }: { status: OrderStatus }) {
+  return (
+    <span
+      className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider ${statusStyle(status)}`}
+    >
+      {status}
+    </span>
+  );
+}
+function OrderDetail({
+  order,
+  busy,
+  onRequest,
+}: {
+  order: Order;
+  busy: boolean;
+  onRequest: (status: OrderStatus) => void;
+}) {
+  const next = nextStatus(order.status);
+  return (
+    <section className="p-5 sm:p-7">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="fine-label text-[var(--wine)]">Selected order</p>
+          <h2 className="display-type mt-2 text-[30px]">{order.customer}</h2>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            {order.id} · {order.channel}
+          </p>
+        </div>
+        <StatusPill status={order.status} />
+      </div>
+      <div className="mt-7 grid grid-cols-2 gap-4 border-y border-[var(--line)] py-5">
+        <div>
+          <p className="fine-label text-[#91867e]">Items</p>
+          <p className="mt-2 text-sm leading-6">{order.items}</p>
+        </div>
+        <div>
+          <p className="fine-label text-[#91867e]">Order total</p>
+          <p className="display-type mt-2 text-2xl">{money(order.total)}</p>
+        </div>
+      </div>
+      {next && (
+        <button
+          disabled={busy}
+          onClick={() => onRequest(next)}
+          className="mt-6 min-h-12 w-full bg-[var(--wine)] px-5 text-xs font-bold uppercase tracking-[.12em] text-white disabled:opacity-50"
+        >
+          {nextLabel(order.status)} →
+        </button>
+      )}
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <button
+          disabled={busy || order.status === "On hold" || order.status === "Shipped"}
+          onClick={() => onRequest("On hold")}
+          className="min-h-12 border border-[var(--line)] px-3 text-xs font-semibold disabled:opacity-40"
+        >
+          Put on hold
+        </button>
+        <button
+          disabled={busy || order.status === "Ready"}
+          onClick={() => onRequest("Ready")}
+          className="min-h-12 border border-[var(--line)] px-3 text-xs font-semibold disabled:opacity-40"
+        >
+          Return to ready
+        </button>
+      </div>
+      <p className="mt-5 text-xs leading-5 text-[var(--muted)]">
+        Every change is saved immediately and attributed to you in the activity log.
+      </p>
+    </section>
+  );
+}
+function ConfirmStatus({
+  order,
+  status,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  order: Order;
+  status: OrderStatus;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-end bg-[#241e1b55] p-0 sm:place-items-center sm:p-6">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        className="w-full border border-[var(--line)] bg-[var(--panel)] p-6 shadow-2xl sm:max-w-md"
+      >
+        <p className="fine-label text-[var(--wine)]">Confirm status change</p>
+        <h2 id="confirm-title" className="display-type mt-3 text-2xl">
+          Move {order.id} to {status}?
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          This updates the live fulfilment queue and records the action in the audit trail.
+        </p>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <button
+            onClick={onCancel}
+            className="min-h-12 border border-[var(--line)] text-xs font-bold uppercase tracking-wider"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={busy}
+            onClick={onConfirm}
+            className="min-h-12 bg-[var(--wine)] text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+          >
+            Confirm change
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function Inventory({
+  data,
+  busy,
+  onReceive,
+}: {
+  data: OperationsData;
+  busy: boolean;
+  onReceive: (id: string, quantity: number) => void;
+}) {
+  const [receiving, setReceiving] = useState<Product | null>(null);
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Finished goods"
+        title="See risk. Take action."
+        copy="Available stock, committed demand and the next operational step are visible at a glance."
+      />
+      <div className="grid items-stretch gap-4 md:grid-cols-2">
+        {data.products.map((p) => {
+          const free = p.stock - p.committed;
+          const shortage = Math.max(0, p.dailySales - free);
+          const risk = shortage > 0;
+          return (
+            <article
+              key={p.id}
+              className={`flex h-full flex-col border bg-[var(--panel)] p-5 sm:p-6 ${risk ? "border-[#b98687]" : "border-[var(--line)]"}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 gap-4">
+                  <div
+                    className="h-12 w-12 shrink-0 rotate-3 rounded-xl"
+                    style={{ background: p.tone }}
+                  />
+                  <div className="min-w-0">
+                    <h2 className="display-type text-[23px] leading-tight">{p.name}</h2>
+                    <p className="mt-1 text-[10px] tracking-widest text-[var(--muted)]">{p.sku}</p>
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${risk ? "bg-[#f0dedb] text-[var(--wine)]" : "bg-[#e5eadf] text-[#596450]"}`}
+                >
+                  {risk ? "At risk" : "Covered"}
+                </span>
+              </div>
+              <div className="mt-6 grid grid-cols-3 border-y border-[var(--line)] py-4">
+                {[
+                  ["Available", p.stock],
+                  ["Committed", p.committed],
+                  ["Free", free],
+                ].map(([l, v]) => (
+                  <div key={l}>
+                    <div className="fine-label text-[#91867f]">{l}</div>
+                    <div className="display-type mt-2 text-2xl">{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div
+                className={`mt-5 min-h-[74px] rounded-sm p-4 ${risk ? "bg-[#f6e9e6]" : "bg-[#edf1e9]"}`}
+              >
+                {risk ? (
+                  <>
+                    <p className="text-sm font-bold text-[var(--wine)]">
+                      Short by {shortage} packs for one day of cover
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      Batch yield: {p.batchYield} packs
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold text-[#596450]">Demand is covered</p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      {free} packs remain after commitments
+                    </p>
+                  </>
+                )}
+              </div>
+              <button
+                onClick={() => setReceiving(p)}
+                className="mt-5 min-h-12 w-full border border-[var(--ink)] px-5 text-xs font-bold uppercase tracking-[.12em]"
+              >
+                Receive stock
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      {receiving && (
+        <ReceiveStock
+          product={receiving}
+          busy={busy}
+          onCancel={() => setReceiving(null)}
+          onReceive={(quantity) => {
+            onReceive(receiving.id, quantity);
+            setReceiving(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+function ReceiveStock({
+  product,
+  busy,
+  onCancel,
+  onReceive,
+}: {
+  product: Product;
+  busy: boolean;
+  onCancel: () => void;
+  onReceive: (quantity: number) => void;
+}) {
+  const [quantity, setQuantity] = useState(product.batchYield);
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-end bg-[#241e1b55] sm:place-items-center sm:p-6">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="receive-title"
+        className="w-full border border-[var(--line)] bg-[var(--panel)] p-6 shadow-2xl sm:max-w-md"
+      >
+        <p className="fine-label text-[var(--wine)]">Receive finished goods</p>
+        <h2 id="receive-title" className="display-type mt-3 text-2xl">
+          {product.name}
+        </h2>
+        <label
+          className="mt-6 block text-xs font-bold uppercase tracking-wider"
+          htmlFor="receive-quantity"
+        >
+          Quantity received
+        </label>
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            aria-label="Decrease quantity"
+            onClick={() => setQuantity(Math.max(1, quantity - 1))}
+            className="grid h-12 w-12 place-items-center border border-[var(--line)] text-xl"
+          >
+            −
+          </button>
+          <input
+            id="receive-quantity"
+            inputMode="numeric"
+            min="1"
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+            className="h-12 min-w-0 flex-1 border border-[var(--line)] bg-white px-4 text-center text-lg font-semibold"
+          />
+          <button
+            aria-label="Increase quantity"
+            onClick={() => setQuantity(quantity + 1)}
+            className="grid h-12 w-12 place-items-center border border-[var(--line)] text-xl"
+          >
+            +
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Typical batch: {product.batchYield} packs
+        </p>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <button
+            onClick={onCancel}
+            className="min-h-12 border border-[var(--line)] text-xs font-bold uppercase tracking-wider"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => onReceive(quantity)}
+            className="min-h-12 bg-[var(--wine)] text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+          >
+            Add to stock
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function Ingredients({ data }: { data: OperationsData }) {
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Recipes + suppliers"
+        title="Know whether the bake is possible."
+        copy="Ingredient thresholds and assigned suppliers let the agent connect production recommendations to purchasing needs."
+      />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {data.ingredients.map((i) => {
+          const low = i.stock <= i.reorderLevel;
+          return (
+            <article key={i.id} className="border border-[var(--line)] bg-[var(--panel)] p-6">
+              <div className="flex justify-between">
+                <p className="fine-label text-[#8b817b]">{i.supplierName}</p>
+                {low && <span className="fine-label text-[var(--wine)]">Reorder</span>}
+              </div>
+              <h2 className="display-type mt-4 text-2xl">{i.name}</h2>
+              <div className="mt-6 flex items-end justify-between border-t border-[var(--line)] pt-5">
+                <div>
+                  <span className="display-type text-3xl">{i.stock}</span>
+                  <span className="ml-1 text-xs text-[var(--muted)]">{i.unit}</span>
+                </div>
+                <p className="text-[10px] text-[var(--muted)]">
+                  Reorder at {i.reorderLevel}
+                  {i.unit}
+                </p>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function ActionReview({
+  data,
+  busy,
+  onPrepare,
+  onApprovePlan,
+  onApprovePurchase,
+}: {
+  data: OperationsData;
+  busy: boolean;
+  onPrepare: () => void;
+  onApprovePlan: (id: string) => void;
+  onApprovePurchase: (id: string) => void;
+}) {
+  const plans = data.productionPlans;
+  const drafts = data.purchaseDrafts;
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Approval inbox"
+        title="Review, then decide."
+        copy="Nothing is approved or sent without you. Open items are shown first and every decision is recorded."
+      />
+      {plans.length === 0 && drafts.length === 0 ? (
+        <EmptyReview busy={busy} onPrepare={onPrepare} />
+      ) : (
+        <div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
+          <Section
+            eyebrow={`${plans.filter((p) => p.status === "Draft").length} open`}
+            title="Production plans"
+          >
+            {plans.map((p) => (
+              <div key={p.id} className="border-b border-[var(--line)] p-6 last:border-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-bold">{p.id}</div>
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{p.rationale}</p>
+                  </div>
+                  <Badge status={p.status} />
+                </div>
+                <div className="my-5 space-y-3">
+                  {p.items.map((i) => (
+                    <div key={i.productId} className="flex justify-between gap-4 text-sm">
+                      <span>{i.productName}</span>
+                      <b className="shrink-0">
+                        {i.batches} batch{i.batches === 1 ? "" : "es"}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+                {p.status === "Draft" && (
+                  <button
+                    disabled={busy}
+                    onClick={() => onApprovePlan(p.id)}
+                    className="min-h-12 w-full bg-[var(--wine)] px-4 text-xs font-bold uppercase tracking-widest text-white disabled:opacity-50"
+                  >
+                    Approve production plan
+                  </button>
+                )}
+              </div>
+            ))}
+          </Section>
+          <Section
+            eyebrow={`${drafts.filter((d) => d.status === "Draft").length} open`}
+            title="Purchase drafts"
+          >
+            {drafts.map((d) => (
+              <div key={d.id} className="border-b border-[var(--line)] p-6 last:border-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold">{d.ingredientName}</div>
+                    <div className="mt-1 text-[10px] text-[var(--muted)]">
+                      {d.supplierName} · {d.id}
+                    </div>
+                  </div>
+                  <Badge status={d.status} />
+                </div>
+                <div className="my-5 flex justify-between border-y border-[var(--line)] py-4 text-sm">
+                  <span>
+                    {d.quantity}
+                    {d.unit}
+                  </span>
+                  <b>{money(d.estimatedCost)}</b>
+                </div>
+                {d.status === "Draft" && (
+                  <button
+                    disabled={busy}
+                    onClick={() => onApprovePurchase(d.id)}
+                    className="min-h-12 w-full border border-[var(--ink)] px-4 text-xs font-bold uppercase tracking-widest disabled:opacity-50"
+                  >
+                    Approve purchase draft
+                  </button>
+                )}
+                <p className="mt-3 text-[10px] leading-5 text-[var(--muted)]">
+                  Approval is recorded, but no supplier order is transmitted in this demo.
+                </p>
+              </div>
+            ))}
+          </Section>
+        </div>
+      )}
+    </div>
+  );
+}
+function EmptyReview({ busy, onPrepare }: { busy: boolean; onPrepare: () => void }) {
+  return (
+    <div className="grid min-h-[320px] place-items-center border border-[var(--line)] bg-[var(--panel)] p-6 text-center">
+      <div className="max-w-sm">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[#f0dedb] text-[var(--wine)]">
+          <Icon name="Action review" size={22} />
+        </span>
+        <h2 className="display-type mt-5 text-2xl">Nothing is waiting.</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          Run a live operational analysis to prepare production and purchasing drafts for your
+          review.
+        </p>
+        <button
+          disabled={busy}
+          onClick={onPrepare}
+          className="mt-6 bg-[var(--wine)] px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:opacity-50"
+        >
+          Prepare actions
+        </button>
+      </div>
+    </div>
+  );
+}
+function Badge({ status }: { status: string }) {
+  return (
+    <span
+      className={`w-fit shrink-0 self-start rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${status === "Approved" ? "bg-[#e5eadf] text-[#596450]" : "bg-[#f0dedb] text-[#812d32]"}`}
+    >
+      {status}
+    </span>
+  );
+}
+function ActorBadge({ actor }: { actor: string }) {
+  const tone =
+    actor === "Agent"
+      ? "bg-[#eadfe0] text-[var(--wine)]"
+      : actor === "Human"
+        ? "bg-[#e5eadf] text-[#596450]"
+        : "bg-[#e9e6e2] text-[#67605b]";
+  return (
+    <span
+      className={`inline-flex w-fit shrink-0 items-center justify-center self-start rounded-full px-3 py-1 text-[9px] font-bold uppercase tracking-wider sm:w-[78px] ${tone}`}
+    >
+      {actor}
+    </span>
+  );
+}
+function AuditList({ data }: { data: OperationsData }) {
+  return (
+    <div>
+      {data.audit.slice(0, 6).map((a) => (
+        <div
+          key={a.id}
+          className="grid gap-2 border-b border-[var(--line)] p-5 last:border-0 sm:grid-cols-[90px_1fr_auto]"
+        >
+          <ActorBadge actor={a.actor} />
+          <div>
+            <div className="text-sm font-semibold">{a.action}</div>
+            <div className="mt-1 text-xs text-[var(--muted)]">{a.detail}</div>
+          </div>
+          <time className="text-[10px] text-[var(--muted)] sm:whitespace-nowrap">
+            {new Date(a.createdAt).toLocaleString("en-MY", {
+              day: "numeric",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </time>
+        </div>
+      ))}
+    </div>
+  );
+}
+function Activity({ data }: { data: OperationsData }) {
+  return (
+    <div className="animate-rise">
+      <Title
+        eyebrow="Accountability"
+        title="Every decision leaves a trace."
+        copy="Persistent history distinguishes automated detection, agent proposals and human approvals."
+      />
+      <Section eyebrow="Latest first" title="Operations audit">
+        <AuditList data={data} />
+      </Section>
+    </div>
+  );
+}

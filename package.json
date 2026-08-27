@@ -1,35 +1,38 @@
 {
-	"name": "merchantos",
-	"version": "0.1.0",
-	"private": true,
-	"packageManager": "pnpm@11.24.0",
-	"dependencies": {
-		"react": "latest",
-		"react-dom": "latest",
-		"vinext": "latest",
-		"react-server-dom-webpack": "latest",
-		"@vinext/cloudflare": "latest"
-	},
-	"devDependencies": {
-		"@tailwindcss/postcss": "latest",
-		"@types/node": "latest",
-		"@types/react": "latest",
-		"@types/react-dom": "latest",
-		"tailwindcss": "latest",
-		"typescript": "latest",
-		"vite": "latest",
-		"@vitejs/plugin-react": "latest",
-		"@vitejs/plugin-rsc": "latest",
-		"@cloudflare/vite-plugin": "latest",
-		"wrangler": "latest"
-	},
-	"type": "module",
-	"scripts": {
-		"dev": "vinext dev",
-		"build": "vinext build",
-		"start": "wrangler dev --config dist/server/wrangler.json",
-		"deploy": "vinext-cloudflare deploy --config dist/server/wrangler.json",
-		"preview": "pnpm run build && pnpm run start",
-		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./worker-configuration.d.ts"
-	}
+  "name": "merchantos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vinext dev",
+    "build": "vinext build",
+    "start": "wrangler dev --config dist/server/wrangler.json",
+    "deploy": "vinext-cloudflare deploy --config dist/server/wrangler.json",
+    "preview": "pnpm run build && pnpm run start",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv ./worker-configuration.d.ts"
+  },
+  "dependencies": {
+    "@vinext/cloudflare": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-server-dom-webpack": "latest",
+    "vinext": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "latest",
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "latest",
+    "oxfmt": "0.65.0",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wrangler": "latest"
+  },
+  "packageManager": "pnpm@11.24.0"
 }
