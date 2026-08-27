@@ -18,6 +18,14 @@
 	"images": {
 		"binding": "IMAGES"
 	},
+	"d1_databases": [
+		{
+			"binding": "MERCHANTOS_DB",
+			"database_name": "merchantos-db",
+			"database_id": "411b21a6-76ad-43c2-9afa-f1c9ca798ac1",
+			"migrations_dir": "migrations"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},
